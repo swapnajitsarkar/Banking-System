@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+
+  # ── MySQL Database ───────────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: banking-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: bankingdb
+      MYSQL_USER: ${DB_USERNAME:-bankinguser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-bankingpass}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - banking-net
+
+  # ── Spring Boot Application ──────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: banking-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy   # Wait for MySQL to actually be ready
+    environment:
+      # DB connection — uses service name "db", not localhost
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/bankingdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USERNAME: ${DB_USERNAME:-bankinguser}
+      DB_PASSWORD: ${DB_PASSWORD:-bankingpass}
+      # Override with strong secret in production via .env or secrets manager
+      JWT_SECRET: ${JWT_SECRET:-ThisIsAVeryLongAndSecureSecretKeyForJWTSigningPurposesOnly123456!}
+      SPRING_PROFILES_ACTIVE: ${PROFILE:-prod}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - banking-net
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  banking-net:
+    driver: bridge
